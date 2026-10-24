@@ -171,48 +171,44 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 `;
 
-const ORBIT_LINE_WGSL = `
+const TRAIL_WGSL = `
 struct CameraUniforms {
     viewProjection: mat4x4<f32>,
     cameraPos: vec4<f32>,
 };
 
-struct OrbitUniforms {
+struct TrailUniforms {
     color: vec4<f32>,
-    radius: f32,
-    padding1: f32,
-    padding2: f32,
-    padding3: f32,
 };
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
-@group(1) @binding(0) var<uniform> orbit: OrbitUniforms;
+@group(1) @binding(0) var<uniform> trail: TrailUniforms;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) progress: f32, // 0.0 (oldest tail vertex) to 1.0 (current live position)
+};
 
 struct VertexOutput {
     @builtin(position) clipPosition: vec4<f32>,
+    @location(0) alpha: f32,
 };
 
 @vertex
-fn vs_main(@builtin(vertex_index) vertexIdx: u32) -> VertexOutput {
+fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    let totalSegments = 128.0;
-    let angle = (f32(vertexIdx) / totalSegments) * 6.28318530718;
-
-    let pos = vec3<f32>(
-        cos(angle) * orbit.radius,
-        sin(angle) * orbit.radius,
-        0.0
-    );
-
-    out.clipPosition = camera.viewProjection * vec4<f32>(pos, 1.0);
+    out.clipPosition = camera.viewProjection * vec4<f32>(in.position, 1.0);
+    // Smoothly fade from head (alpha=1.0) to tail (alpha=0.0)
+    out.alpha = pow(in.progress, 1.6);
     return out;
 }
 
 @fragment
-fn fs_main() -> @location(0) vec4<f32> {
-    return orbit.color;
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return vec4<f32>(trail.color.rgb, trail.color.a * in.alpha * 0.85);
 }
 `;
+
 
 const STARFIELD_WGSL = `
 struct CameraUniforms {
@@ -478,6 +474,8 @@ const PLANET_METADATA = [
     { name: "Pluto", type: "Dwarf Planet (Kuiper)", massKg: "1.303 × 10²² kg", radiusKm: "1,188 km", period: "90,560 Days (247.9 Yrs)", rot: "-153.3 Hours", color: "#ccb8a6", a: 39.48 }
 ];
 
+const MAX_TRAIL_CAPACITY = 650;
+
 // --- 4. Main Application Class ---
 
 class SolarSimApp {
@@ -490,7 +488,7 @@ class SolarSimApp {
         // WebGPU Pipelines
         this.computePipeline = null;
         this.planetPipeline = null;
-        this.orbitPipeline = null;
+        this.trailPipeline = null;
         this.starfieldPipeline = null;
         this.ringPipeline = null;
 
@@ -501,7 +499,15 @@ class SolarSimApp {
         this.simUniformBuffer = null;
         this.cameraUniformBuffer = null;
         this.ringUniformBuffer = null;
-        this.orbitUniformBuffers = [];
+        this.trailUniformBuffers = [];
+        this.trailVertexBuffer = null;
+        this.trailVertexData = new Float32Array(11 * MAX_TRAIL_CAPACITY * 4);
+        this.trailVertexCounts = new Uint32Array(11);
+        this.trailHistories = [];
+        this.maxTrailPoints = 300;
+        for (let i = 0; i <= 10; ++i) {
+            this.trailHistories.push([]);
+        }
         this.depthTexture = null;
 
         // Meshes
@@ -515,8 +521,8 @@ class SolarSimApp {
         // Bind Groups
         this.computeBindGroup = null;
         this.planetBindGroup = null;
-        this.orbitCameraBindGroup = null;
-        this.orbitBindGroups = [];
+        this.trailCameraBindGroup = null;
+        this.trailBindGroups = [];
         this.starfieldBindGroup = null;
         this.ringCameraBindGroup = null;
         this.ringBindGroup = null;
@@ -666,13 +672,24 @@ class SolarSimApp {
             depthStencil: { depthWriteEnabled: true, depthCompare: "less", format: "depth24plus" },
         });
 
-        // 3. Render Pipeline: Orbit Circles
-        const orbitModule = this.device.createShaderModule({ code: ORBIT_LINE_WGSL });
-        this.orbitPipeline = this.device.createRenderPipeline({
+        // 3. Render Pipeline: Orbital Trajectory Trails (fading line-strip)
+        const trailModule = this.device.createShaderModule({ code: TRAIL_WGSL });
+        this.trailPipeline = this.device.createRenderPipeline({
             layout: "auto",
-            vertex: { module: orbitModule, entryPoint: "vs_main" },
+            vertex: {
+                module: trailModule,
+                entryPoint: "vs_main",
+                buffers: [{
+                    arrayStride: 16,
+                    stepMode: "vertex",
+                    attributes: [
+                        { shaderLocation: 0, offset: 0, format: "float32x3" },
+                        { shaderLocation: 1, offset: 12, format: "float32" },
+                    ],
+                }],
+            },
             fragment: {
-                module: orbitModule,
+                module: trailModule,
                 entryPoint: "fs_main",
                 targets: [{
                     format: this.format,
@@ -759,36 +776,40 @@ class SolarSimApp {
         // Initialize Celestial Bodies Storage Buffer
         this.initGpuBodiesBuffer();
 
-        // Orbit Line Buffers for planets 1 to 10
-        this.initOrbitBuffers();
+        // Trail Line Buffers for planetary bodies
+        this.initTrailBuffers();
     }
 
-    initOrbitBuffers() {
-        this.orbitUniformBuffers = [];
-        this.orbitBindGroups = [];
+    initTrailBuffers() {
+        this.trailUniformBuffers = [];
+        this.trailBindGroups = [];
 
-        for (let i = 1; i <= 10; ++i) {
-            const meta = PLANET_METADATA[i];
+        // Pre-allocate GPU vertex buffer for 11 bodies (0 to 10) with capacity MAX_TRAIL_CAPACITY
+        this.trailVertexBuffer = this.device.createBuffer({
+            size: 11 * MAX_TRAIL_CAPACITY * 16,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        });
+
+        for (let i = 0; i <= 10; ++i) {
+            const meta = PLANET_METADATA[i] || { color: "#ffffff" };
             const buffer = this.device.createBuffer({
-                size: 32,
+                size: 16,
                 usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
             });
 
-            // RGB color + semi-major axis
+            // RGB color + alpha (higher alpha for bright trail head)
             const col = this.hexToRgb(meta.color);
-            const data = new Float32Array([
-                col[0], col[1], col[2], 0.35, // alpha 0.35
-                meta.a, 0.0, 0.0, 0.0,
-            ]);
+            const alpha = (i === 4) ? 0.95 : 0.85;
+            const data = new Float32Array([col[0], col[1], col[2], alpha]);
             this.device.queue.writeBuffer(buffer, 0, data);
 
             const bindGroup = this.device.createBindGroup({
-                layout: this.orbitPipeline.getBindGroupLayout(1),
+                layout: this.trailPipeline.getBindGroupLayout(1),
                 entries: [{ binding: 0, resource: { buffer: buffer } }],
             });
 
-            this.orbitUniformBuffers.push(buffer);
-            this.orbitBindGroups.push(bindGroup);
+            this.trailUniformBuffers.push(buffer);
+            this.trailBindGroups.push(bindGroup);
         }
     }
 
@@ -917,8 +938,8 @@ class SolarSimApp {
             entries: [{ binding: 0, resource: { buffer: this.cameraUniformBuffer } }],
         });
 
-        this.orbitCameraBindGroup = this.device.createBindGroup({
-            layout: this.orbitPipeline.getBindGroupLayout(0),
+        this.trailCameraBindGroup = this.device.createBindGroup({
+            layout: this.trailPipeline.getBindGroupLayout(0),
             entries: [{ binding: 0, resource: { buffer: this.cameraUniformBuffer } }],
         });
 
@@ -1100,6 +1121,12 @@ class SolarSimApp {
         cameraUniformData.set([eye[0], eye[1], eye[2], this.bodyScaleMultiplier || 1.0], 16);
         this.device.queue.writeBuffer(this.cameraUniformBuffer, 0, cameraUniformData);
 
+        // Update and upload Orbital Trajectory Tails
+        if (document.getElementById("toggle-trails").checked) {
+            this.updateTrails();
+            this.uploadTrailVertices();
+        }
+
         // Begin Render Pass
         const commandEncoder = this.device.createCommandEncoder();
         const textureView = this.context.getCurrentTexture().createView();
@@ -1126,14 +1153,18 @@ class SolarSimApp {
             renderPass.draw(4);
         }
 
-        // 2. Draw Orbit Circles
+        // 2. Draw Orbital Trajectory Tails (Planets & Moon real-time past positions)
         if (document.getElementById("toggle-trails").checked) {
-            renderPass.setPipeline(this.orbitPipeline);
-            renderPass.setBindGroup(0, this.orbitCameraBindGroup);
+            renderPass.setPipeline(this.trailPipeline);
+            renderPass.setBindGroup(0, this.trailCameraBindGroup);
+            renderPass.setVertexBuffer(0, this.trailVertexBuffer);
 
-            for (let i = 0; i < this.orbitBindGroups.length; ++i) {
-                renderPass.setBindGroup(1, this.orbitBindGroups[i]);
-                renderPass.draw(129); // 128 segments + 1 closing vertex
+            for (let i = 1; i <= 10; ++i) {
+                const count = this.trailVertexCounts[i];
+                if (count >= 2) {
+                    renderPass.setBindGroup(1, this.trailBindGroups[i]);
+                    renderPass.draw(count, 1, i * MAX_TRAIL_CAPACITY, 0);
+                }
             }
         }
 
@@ -1176,6 +1207,97 @@ class SolarSimApp {
             this.bodiesFloatArray[offset + 1] || 0,
             this.bodiesFloatArray[offset + 2] || 0,
         ];
+    }
+
+    clearTrails() {
+        for (let i = 0; i <= 10; ++i) {
+            this.trailHistories[i] = [];
+            this.trailVertexCounts[i] = 0;
+        }
+        if (this.trailVertexData) {
+            this.trailVertexData.fill(0);
+        }
+    }
+
+    updateTrails() {
+        if (!this.bodiesFloatArray || this.bodiesFloatArray.length === 0) return;
+        const shouldSample = !this.isPaused;
+
+        for (let i = 0; i <= 10; ++i) {
+            const meta = PLANET_METADATA[i];
+            const pos = this.getBodyPosition(i);
+            if (i !== 0 && pos[0] === 0 && pos[1] === 0 && pos[2] === 0) continue;
+
+            const history = this.trailHistories[i];
+            if (history.length === 0) {
+                history.push([pos[0], pos[1], pos[2]]);
+            } else if (shouldSample) {
+                const last = history[history.length - 1];
+                const dx = pos[0] - last[0];
+                const dy = pos[1] - last[1];
+                const dz = pos[2] - last[2];
+                const distSq = dx * dx + dy * dy + dz * dz;
+
+                let minDist = 0.01;
+                if (i === 4) {
+                    // Moon orbiting Earth (~0.00257 AU relative radius)
+                    minDist = 0.0006;
+                } else if (i === 0) {
+                    minDist = 0.0005;
+                } else {
+                    const a = meta && meta.a ? meta.a : 1.0;
+                    minDist = Math.max(0.002, a * (2.0 * Math.PI / Math.max(50, this.maxTrailPoints)));
+                }
+
+                if (distSq >= minDist * minDist) {
+                    history.push([pos[0], pos[1], pos[2]]);
+                    while (history.length > this.maxTrailPoints) {
+                        history.shift();
+                    }
+                }
+            }
+        }
+    }
+
+    uploadTrailVertices() {
+        let anyVertices = false;
+
+        for (let i = 0; i <= 10; ++i) {
+            const history = this.trailHistories[i];
+            const pos = this.getBodyPosition(i);
+            if (!history || history.length === 0) {
+                this.trailVertexCounts[i] = 0;
+                continue;
+            }
+
+            // Head vertex is the current live position
+            const count = Math.min(history.length + 1, MAX_TRAIL_CAPACITY);
+            const baseFloatOffset = i * MAX_TRAIL_CAPACITY * 4;
+
+            for (let k = 0; k < count - 1; ++k) {
+                const pt = history[k];
+                const progress = (count > 1) ? (k / (count - 1)) : 1.0;
+                const idx = baseFloatOffset + k * 4;
+                this.trailVertexData[idx] = pt[0];
+                this.trailVertexData[idx + 1] = pt[1];
+                this.trailVertexData[idx + 2] = pt[2];
+                this.trailVertexData[idx + 3] = progress;
+            }
+
+            // Live vertex at tip of tail
+            const lastIdx = baseFloatOffset + (count - 1) * 4;
+            this.trailVertexData[lastIdx] = pos[0];
+            this.trailVertexData[lastIdx + 1] = pos[1];
+            this.trailVertexData[lastIdx + 2] = pos[2];
+            this.trailVertexData[lastIdx + 3] = 1.0;
+
+            this.trailVertexCounts[i] = count;
+            if (count >= 2) anyVertices = true;
+        }
+
+        if (anyVertices && this.trailVertexBuffer) {
+            this.device.queue.writeBuffer(this.trailVertexBuffer, 0, this.trailVertexData);
+        }
     }
 
     updateDossierCard() {
@@ -1246,6 +1368,7 @@ class SolarSimApp {
         // Reset
         document.getElementById("btn-reset").addEventListener("click", () => {
             this.simTimeYears = 0.0;
+            this.clearTrails();
             this.initGpuBodiesBuffer();
             if (this.wasmSimulation) this.wasmSimulation.reset();
             const pos = this.getBodyPosition(this.trackedTargetIndex);
@@ -1309,6 +1432,23 @@ class SolarSimApp {
                 this.bodyScaleMultiplier = parseFloat(e.target.value);
                 const valElem = document.getElementById("val-bodyscale");
                 if (valElem) valElem.textContent = `${this.bodyScaleMultiplier.toFixed(2)}x`;
+            });
+        }
+
+        // Trail History Length Slider
+        const sliderTrail = document.getElementById("slider-traillength");
+        if (sliderTrail) {
+            sliderTrail.addEventListener("input", (e) => {
+                this.maxTrailPoints = parseInt(e.target.value, 10);
+                const valElem = document.getElementById("val-traillength");
+                if (valElem) valElem.textContent = `${this.maxTrailPoints} pts`;
+                for (let i = 0; i <= 10; ++i) {
+                    if (this.trailHistories[i]) {
+                        while (this.trailHistories[i].length > this.maxTrailPoints) {
+                            this.trailHistories[i].shift();
+                        }
+                    }
+                }
             });
         }
 
@@ -1428,15 +1568,31 @@ class SolarSimApp {
             const cy = height / 2;
             const scale = Math.min(width, height) / (this.cameraDistance * 1.8);
 
-            // Draw Orbit Rings
+            // Draw Orbit Tails
             if (document.getElementById("toggle-trails").checked) {
                 for (let i = 1; i <= 10; ++i) {
                     const meta = PLANET_METADATA[i];
-                    ctx.beginPath();
-                    ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
-                    ctx.lineWidth = 1;
-                    ctx.arc(cx, cy, meta.a * scale, 0, Math.PI * 2);
-                    ctx.stroke();
+                    const history = this.trailHistories[i];
+                    if (history && history.length > 1) {
+                        ctx.beginPath();
+                        ctx.strokeStyle = meta.color || "rgba(255, 255, 255, 0.4)";
+                        ctx.lineWidth = (i === 4) ? 1.0 : 1.5;
+                        for (let k = 0; k < history.length; ++k) {
+                            const pt = history[k];
+                            const px = cx + pt[0] * scale;
+                            const py = cy + pt[1] * scale;
+                            if (k === 0) ctx.moveTo(px, py);
+                            else ctx.lineTo(px, py);
+                        }
+                        ctx.stroke();
+                    } else {
+                        // Fallback subtle circle if no history recorded yet
+                        ctx.beginPath();
+                        ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+                        ctx.lineWidth = 1;
+                        ctx.arc(cx, cy, meta.a * scale, 0, Math.PI * 2);
+                        ctx.stroke();
+                    }
                 }
             }
 

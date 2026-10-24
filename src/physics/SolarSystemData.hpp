@@ -35,7 +35,7 @@ public:
             sun.position = {0.0, 0.0, 0.0};
             sun.velocity = {0.0, 0.0, 0.0};
             sun.realRadiusKm = 696340.0f;
-            sun.displayRadius = 0.55f;
+            sun.displayRadius = 0.22f; // Scaled ~0.4x so Mercury (perihelion 0.3075 AU) has clear clearance
             sun.color = {1.0f, 0.92f, 0.55f, 1.0f};
             sun.isEmitter = true;
             sun.rotationPeriodHours = 600.0f;
@@ -53,7 +53,7 @@ public:
             mercury.position = {0.3075, 0.0, 0.0}; // perihelion
             mercury.velocity = {0.0, 12.436, 0.0};
             mercury.realRadiusKm = 2439.7f;
-            mercury.displayRadius = 0.09f;
+            mercury.displayRadius = 0.055f; // ~0.6x
             mercury.color = {0.72f, 0.70f, 0.68f, 1.0f};
             mercury.rotationPeriodHours = 1407.6f;
             mercury.axialTiltDeg = 0.034f;
@@ -70,7 +70,7 @@ public:
             venus.position = {0.7184, 0.0, 0.0};
             venus.velocity = {0.0, 7.437, 0.0};
             venus.realRadiusKm = 6051.8f;
-            venus.displayRadius = 0.14f;
+            venus.displayRadius = 0.085f; // ~0.6x
             venus.color = {0.91f, 0.78f, 0.55f, 1.0f};
             venus.rotationPeriodHours = -5832.5f; // Retrograde rotation
             venus.axialTiltDeg = 177.36f;
@@ -87,7 +87,7 @@ public:
             earth.position = {0.9833, 0.0, 0.0};
             earth.velocity = {0.0, 6.389, 0.0};
             earth.realRadiusKm = 6371.0f;
-            earth.displayRadius = 0.15f;
+            earth.displayRadius = 0.090f; // ~0.6x
             earth.color = {0.25f, 0.55f, 0.95f, 1.0f};
             earth.rotationPeriodHours = 23.934f;
             earth.axialTiltDeg = 23.44f;
@@ -105,7 +105,7 @@ public:
             moon.position = {0.9833 + 0.00257, 0.0, 0.0001};
             moon.velocity = {0.0, 6.389 + 0.2156, 0.01};
             moon.realRadiusKm = 1737.4f;
-            moon.displayRadius = 0.06f;
+            moon.displayRadius = 0.035f; // ~0.6x
             moon.color = {0.82f, 0.82f, 0.84f, 1.0f};
             moon.rotationPeriodHours = 655.7f;
             moon.axialTiltDeg = 6.68f;
@@ -122,7 +122,7 @@ public:
             mars.position = {1.3814, 0.0, 0.0};
             mars.velocity = {0.0, 5.589, 0.0};
             mars.realRadiusKm = 3389.5f;
-            mars.displayRadius = 0.11f;
+            mars.displayRadius = 0.065f; // ~0.6x
             mars.color = {0.89f, 0.38f, 0.22f, 1.0f};
             mars.rotationPeriodHours = 24.623f;
             mars.axialTiltDeg = 25.19f;
@@ -139,7 +139,7 @@ public:
             jupiter.position = {4.9520, 0.0, 0.0};
             jupiter.velocity = {0.0, 2.891, 0.0};
             jupiter.realRadiusKm = 69911.0f;
-            jupiter.displayRadius = 0.38f;
+            jupiter.displayRadius = 0.245f; // ~0.65x
             jupiter.color = {0.84f, 0.68f, 0.52f, 1.0f};
             jupiter.rotationPeriodHours = 9.925f;
             jupiter.axialTiltDeg = 3.13f;
@@ -156,11 +156,11 @@ public:
             saturn.position = {9.0508, 0.0, 0.0};
             saturn.velocity = {0.0, 2.145, 0.0};
             saturn.realRadiusKm = 58232.0f;
-            saturn.displayRadius = 0.32f;
+            saturn.displayRadius = 0.205f; // ~0.65x
             saturn.color = {0.92f, 0.85f, 0.65f, 1.0f};
             saturn.hasRings = true;
-            saturn.ringInnerRadius = 0.40f;
-            saturn.ringOuterRadius = 0.82f;
+            saturn.ringInnerRadius = 0.260f;
+            saturn.ringOuterRadius = 0.530f;
             saturn.rotationPeriodHours = 10.656f;
             saturn.axialTiltDeg = 26.73f;
             bodies.push_back(saturn);
@@ -176,7 +176,7 @@ public:
             uranus.position = {18.328, 0.0, 0.0};
             uranus.velocity = {0.0, 1.501, 0.0};
             uranus.realRadiusKm = 25362.0f;
-            uranus.displayRadius = 0.23f;
+            uranus.displayRadius = 0.150f; // ~0.65x
             uranus.color = {0.55f, 0.83f, 0.88f, 1.0f};
             uranus.rotationPeriodHours = -17.24f; // Retrograde / tilted on side
             uranus.axialTiltDeg = 97.77f;
@@ -193,7 +193,7 @@ public:
             neptune.position = {29.824, 0.0, 0.0};
             neptune.velocity = {0.0, 1.156, 0.0};
             neptune.realRadiusKm = 24622.0f;
-            neptune.displayRadius = 0.22f;
+            neptune.displayRadius = 0.140f; // ~0.64x
             neptune.color = {0.28f, 0.46f, 0.94f, 1.0f};
             neptune.rotationPeriodHours = 16.11f;
             neptune.axialTiltDeg = 28.32f;
@@ -214,7 +214,7 @@ public:
             pluto.position = {r * std::cos(incRad), 0.0, r * std::sin(incRad)};
             pluto.velocity = {0.0, v, 0.0};
             pluto.realRadiusKm = 1188.3f;
-            pluto.displayRadius = 0.07f;
+            pluto.displayRadius = 0.042f; // ~0.6x
             pluto.color = {0.80f, 0.72f, 0.65f, 1.0f};
             pluto.rotationPeriodHours = -153.3f;
             pluto.axialTiltDeg = 122.53f;
@@ -288,7 +288,7 @@ public:
             };
 
             ast.realRadiusKm = 10.0f + static_cast<float>(i % 50);
-            ast.displayRadius = 0.025f;
+            ast.displayRadius = 0.015f; // ~0.6x
             float c = distColor(rng);
             ast.color = {c, c * 0.95f, c * 0.9f, 1.0f};
 

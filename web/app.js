@@ -95,7 +95,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 const PLANET_RENDER_WGSL = `
 struct CameraUniforms {
     viewProjection: mat4x4<f32>,
-    cameraPos: vec4<f32>,
+    cameraPos: vec4<f32>, // xyz = eye pos, w = body scale multiplier
 };
 
 struct GpuBody {
@@ -128,7 +128,8 @@ fn vs_main(in: VertexInput, @builtin(instance_index) instanceIdx: u32) -> Vertex
     var out: VertexOutput;
     let body = bodies[instanceIdx];
 
-    let radius = max(0.04, body.vel.w);
+    let scale = select(1.0, camera.cameraPos.w, camera.cameraPos.w > 0.01);
+    let radius = max(0.008, body.vel.w * scale);
     let worldPos = body.pos.xyz + in.position * radius;
 
     out.worldPosition = worldPos;
@@ -525,6 +526,7 @@ class SolarSimApp {
         this.subSteps = 10;
         this.asteroidCount = 200;
         this.trackedTargetIndex = 0; // Default to The Sun overview!
+        this.bodyScaleMultiplier = 1.0;
 
         // Camera State
         this.cameraDistance = 14.0; // AU
@@ -814,27 +816,27 @@ class SolarSimApp {
         const initialBodies = [
             // pos(xyz), mass, vel(xyz), radius, rgba, extra(type, id, flags, padding)
             // 0: Sun
-            0, 0, 0, 1.0,         0, 0, 0, 0.65,        1.0, 0.92, 0.55, 1.0,   0, 0, 1.0, 0,
+            0, 0, 0, 1.0,         0, 0, 0, 0.22,        1.0, 0.92, 0.55, 1.0,   0, 0, 1.0, 0,
             // 1: Mercury
-            0.3075, 0, 0, 1.66e-7,   0, 12.436, 0, 0.12,   0.72, 0.70, 0.68, 1.0,   1, 1, 0, 0,
+            0.3075, 0, 0, 1.66e-7,   0, 12.436, 0, 0.055,   0.72, 0.70, 0.68, 1.0,   1, 1, 0, 0,
             // 2: Venus
-            0.7184, 0, 0, 2.45e-6,   0, 7.437, 0, 0.16,    0.91, 0.78, 0.55, 1.0,   1, 2, 0, 0,
+            0.7184, 0, 0, 2.45e-6,   0, 7.437, 0, 0.085,    0.91, 0.78, 0.55, 1.0,   1, 2, 0, 0,
             // 3: Earth
-            0.9833, 0, 0, 3.00e-6,   0, 6.389, 0, 0.18,    0.25, 0.55, 0.95, 1.0,   1, 3, 0, 0,
+            0.9833, 0, 0, 3.00e-6,   0, 6.389, 0, 0.090,    0.25, 0.55, 0.95, 1.0,   1, 3, 0, 0,
             // 4: Moon
-            0.98587, 0, 0.0001, 3.69e-8, 0, 6.604, 0.01, 0.08, 0.82, 0.82, 0.84, 1.0, 4, 4, 0, 0,
+            0.98587, 0, 0.0001, 3.69e-8, 0, 6.604, 0.01, 0.035, 0.82, 0.82, 0.84, 1.0, 4, 4, 0, 0,
             // 5: Mars
-            1.3814, 0, 0, 3.23e-7,   0, 5.589, 0, 0.14,    0.89, 0.38, 0.22, 1.0,   1, 5, 0, 0,
+            1.3814, 0, 0, 3.23e-7,   0, 5.589, 0, 0.065,    0.89, 0.38, 0.22, 1.0,   1, 5, 0, 0,
             // 6: Jupiter
-            4.9520, 0, 0, 9.55e-4,   0, 2.891, 0, 0.45,    0.84, 0.68, 0.52, 1.0,   2, 6, 0, 0,
+            4.9520, 0, 0, 9.55e-4,   0, 2.891, 0, 0.245,    0.84, 0.68, 0.52, 1.0,   2, 6, 0, 0,
             // 7: Saturn
-            9.0508, 0, 0, 2.86e-4,   0, 2.145, 0, 0.38,    0.92, 0.85, 0.65, 1.0,   2, 7, 0, 0,
+            9.0508, 0, 0, 2.86e-4,   0, 2.145, 0, 0.205,    0.92, 0.85, 0.65, 1.0,   2, 7, 0, 0,
             // 8: Uranus
-            18.328, 0, 0, 4.37e-5,   0, 1.501, 0, 0.28,    0.55, 0.83, 0.88, 1.0,   3, 8, 0, 0,
+            18.328, 0, 0, 4.37e-5,   0, 1.501, 0, 0.150,    0.55, 0.83, 0.88, 1.0,   3, 8, 0, 0,
             // 9: Neptune
-            29.824, 0, 0, 5.15e-5,   0, 1.156, 0, 0.26,    0.28, 0.46, 0.94, 1.0,   3, 9, 0, 0,
+            29.824, 0, 0, 5.15e-5,   0, 1.156, 0, 0.140,    0.28, 0.46, 0.94, 1.0,   3, 9, 0, 0,
             // 10: Pluto
-            28.34, 0, 8.74, 6.55e-9, 0, 1.289, 0, 0.10,    0.80, 0.72, 0.65, 1.0,   5, 10, 0, 0,
+            28.34, 0, 8.74, 6.55e-9, 0, 1.289, 0, 0.042,    0.80, 0.72, 0.65, 1.0,   5, 10, 0, 0,
         ];
 
         // Procedural Asteroids
@@ -857,7 +859,7 @@ class SolarSimApp {
             const c = 0.55 + Math.random() * 0.35;
             initialBodies.push(
                 x, y, z, 1e-12,
-                vx, vy, vz, 0.035, // display radius
+                vx, vy, vz, 0.015, // display radius
                 c, c * 0.95, c * 0.9, 1.0,
                 6, 11 + i, 0, 0
             );
@@ -1058,10 +1060,10 @@ class SolarSimApp {
         const view = Mat4.lookAt(eye, this.cameraFocus, [0, 1, 0]);
         const viewProj = Mat4.multiply(proj, view);
 
-        // Upload Camera Uniforms (16 float matrix + 4 float eye)
+        // Upload Camera Uniforms (16 float matrix + 4 float eye with bodyScaleMultiplier in w)
         const cameraUniformData = new Float32Array(32);
         cameraUniformData.set(viewProj, 0);
-        cameraUniformData.set([eye[0], eye[1], eye[2], 1.0], 16);
+        cameraUniformData.set([eye[0], eye[1], eye[2], this.bodyScaleMultiplier || 1.0], 16);
         this.device.queue.writeBuffer(this.cameraUniformBuffer, 0, cameraUniformData);
 
         // Begin Render Pass
@@ -1111,7 +1113,11 @@ class SolarSimApp {
         // 4. Draw Saturn's Rings
         if (document.getElementById("toggle-rings").checked && this.bodyCount > 7) {
             const saturnPos = this.getBodyPosition(7);
-            const ringData = new Float32Array([saturnPos[0], saturnPos[1], saturnPos[2], 0.38, 1, 1, 1, 1]);
+            const saturnBaseRadius = (this.bodiesFloatArray && this.bodiesFloatArray.length > 7 * 16 + 7)
+                ? this.bodiesFloatArray[7 * 16 + 7]
+                : 0.205;
+            const ringScale = saturnBaseRadius * (this.bodyScaleMultiplier || 1.0);
+            const ringData = new Float32Array([saturnPos[0], saturnPos[1], saturnPos[2], ringScale, 1, 1, 1, 1]);
             this.device.queue.writeBuffer(this.ringUniformBuffer, 0, ringData);
 
             renderPass.setPipeline(this.ringPipeline);
@@ -1248,6 +1254,16 @@ class SolarSimApp {
             this.initGpuBodiesBuffer();
             if (this.wasmSimulation) this.wasmSimulation.setAsteroidCount(this.asteroidCount);
         });
+
+        // Body Display Scale Slider
+        const sliderScale = document.getElementById("slider-bodyscale");
+        if (sliderScale) {
+            sliderScale.addEventListener("input", (e) => {
+                this.bodyScaleMultiplier = parseFloat(e.target.value);
+                const valElem = document.getElementById("val-bodyscale");
+                if (valElem) valElem.textContent = `${this.bodyScaleMultiplier.toFixed(2)}x`;
+            });
+        }
 
         // Target Selector & Quick Presets
         const selectTarget = document.getElementById("select-target");

@@ -127,6 +127,13 @@
 
             <div class="panel-section">
                 <h3>Visual Layers</h3>
+                <div class="control-row" style="margin-bottom: 12px;">
+                    <div class="label-with-val">
+                        <label for="slider-bodyscale">Body Display Scale</label>
+                        <span id="val-bodyscale" class="control-val">1.00x</span>
+                    </div>
+                    <input type="range" id="slider-bodyscale" min="0.3" max="2.0" value="1.0" step="0.05" class="slider-styled">
+                </div>
                 <div class="toggle-grid">
                     <label class="toggle-card">
                         <input type="checkbox" id="toggle-trails" checked>
@@ -199,6 +206,6 @@
 
     <!-- WebAssembly Loader Script -->
     <script src="solsim.js"></script>
-    <script src="app.js?v=3"></script>
+    <script src="app.js?v=4"></script>
 </body>
 </html>

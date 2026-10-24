@@ -25,10 +25,13 @@ docker-build:
 	docker-compose build
 
 docker-up:
-	docker-compose up -d vscode
+	docker compose up -d
 
 docker-web:
-	docker-compose up -d web
+	docker compose up -d web
+
+docker-vscode:
+	docker compose up -d vscode
 
 docker-down:
 	docker-compose down

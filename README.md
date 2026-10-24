@@ -27,38 +27,77 @@ A modern, in-browser Solar System simulator built on **C++20** and **WebGPU**, p
 
 ---
 
-## 🐳 Development Environment (Docker)
+## 🚀 Quick Start & Development
 
-The project is fully containerized with an **Emscripten SDK** (`emscripten/emsdk`) development environment and an integrated **VS Code Server** (code-server) web interface.
+### 1. Running with Docker (Recommended)
 
-### 1. Starting the Containers (Docker Compose)
+Start the services with Docker Compose:
 ```bash
-docker-compose up -d vscode
+# Start all services (Web Simulator + VS Code IDE):
+docker compose up -d
+
+# Or start ONLY the Web Simulator:
+docker compose up -d web
 ```
-- **VS Code Web IDE**: [http://localhost:8443](http://localhost:8443) (accessible without password)
+
 - **SolarSim WebGPU Web App**: [http://localhost:8080](http://localhost:8080)
+- **VS Code Web IDE**: [http://localhost:8443](http://localhost:8443) (accessible without password)
 
-### 2. Building the Project Inside the Container
-Open a terminal in the container, or use the `dev` service:
+To stop the containers:
 ```bash
-# Interactive shell in the container:
-docker-compose run --rm dev bash
+docker compose down
+```
 
-# Build WebAssembly and WebGPU targets:
+---
+
+### 2. Running Locally (Without Docker)
+
+You can serve the application directly on your host machine using the included Python server (configured with WebGPU Cross-Origin isolation headers):
+```bash
+python3 scripts/server.py 8080 web
+# or using Make:
+make serve
+```
+Then navigate to **[http://localhost:8080](http://localhost:8080)** in any WebGPU-compatible browser (Google Chrome, Microsoft Edge, or Firefox Nightly).
+
+---
+
+### 3. Building the Project
+
+#### Inside the Docker Container (via Emscripten SDK):
+```bash
+# Build WebAssembly (solsim.js / solsim.wasm) and native binaries:
+docker compose run --rm dev bash scripts/build.sh
+```
+
+#### On Host (if Emscripten and CMake are installed):
+```bash
 bash scripts/build.sh
 ```
 
-### 3. Running the Native C++20 Test & Benchmark Locally
+---
+
+### 4. Running the Native C++20 Test & Benchmark
+
+#### Inside Docker:
 ```bash
-make run-native
+docker compose run --rm dev ./build-native/solsim_native
 ```
+
+#### Locally on Host (macOS / Linux):
+```bash
+cmake -B build-native -DCMAKE_BUILD_TYPE=Release
+cmake --build build-native
+./build-native/solsim_native
+```
+
 Output:
 ```text
 ======================================================================
        SOLAR SYSTEM PHYSICS SIMULATOR (C++20 / WebGPU / RK4)          
 ======================================================================
-[+] Initialized Solar System with 261 celestial bodies.
-    - Sun + 8 Planets + Moon + Pluto + 250 Asteroids.
+[+] Initialized Solar System with 211 celestial bodies.
+    - Sun + 8 Planets + Moon + Pluto + 200 Asteroids.
     - Integrator: Runge-Kutta 4th Order (RK4)
 [+] Running RK4 N-body Benchmark (1000 sub-steps, 1 year total simulation)...
 [✓] Benchmark completed in 496.83 ms.
@@ -120,5 +159,9 @@ solarsimWebGPU/
 └── web/
     ├── index.html               # High-fidelity web user interface
     ├── style.css                # Glassmorphic dark-space styling
-    └── app.js                   # WebGPU initialization, pipelines & event handling
+    ├── app.js                   # WebGPU initialization, pipelines & event handling
+    ├── solsim.js                # Emscripten C++20 JavaScript wrapper
+    ├── solsim.wasm              # Compiled C++20 RK4 WebAssembly binary
+    └── shaders/
+        └── rk4_compute.wgsl     # Compute shader for WebGPU N-body gravity
 ```

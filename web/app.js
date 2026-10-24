@@ -28,7 +28,7 @@ struct SimUniforms {
 @group(0) @binding(0) var<uniform> sim: SimUniforms;
 @group(0) @binding(1) var<storage, read_write> bodies: array<GpuBody>;
 
-fn compute_acceleration(testPos: vec3<f32>, myIdx: u32) -> vec3<f32> {
+fn compute_acceleration(testPos: vec3<f32>, myIdx: u32, stageDt: f32) -> vec3<f32> {
     var acc = vec3<f32>(0.0, 0.0, 0.0);
     let count = sim.bodyCount;
 
@@ -38,7 +38,9 @@ fn compute_acceleration(testPos: vec3<f32>, myIdx: u32) -> vec3<f32> {
         }
 
         let other = bodies[j];
-        let diff = other.pos.xyz - testPos;
+        // Project other body's position to current intermediate RK4 stage time:
+        let otherPos = other.pos.xyz + other.vel.xyz * stageDt;
+        let diff = otherPos - testPos;
         let distSq = dot(diff, diff) + sim.softeningSq;
         let dist = sqrt(distSq);
         let invDist3 = 1.0 / (distSq * dist);
@@ -63,22 +65,22 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let v0 = body.vel.xyz;
 
     // --- Runge-Kutta 4th Order (RK4) 4 Stages ---
-    let k1_v = compute_acceleration(r0, idx);
+    let k1_v = compute_acceleration(r0, idx, 0.0);
     let k1_r = v0;
 
     let r1 = r0 + k1_r * (0.5 * dt);
     let v1 = v0 + k1_v * (0.5 * dt);
-    let k2_v = compute_acceleration(r1, idx);
+    let k2_v = compute_acceleration(r1, idx, 0.5 * dt);
     let k2_r = v1;
 
     let r2 = r0 + k2_r * (0.5 * dt);
     let v2 = v0 + k2_v * (0.5 * dt);
-    let k3_v = compute_acceleration(r2, idx);
+    let k3_v = compute_acceleration(r2, idx, 0.5 * dt);
     let k3_r = v2;
 
     let r3 = r0 + k3_r * dt;
     let v3 = v0 + k3_v * dt;
-    let k4_v = compute_acceleration(r3, idx);
+    let k4_v = compute_acceleration(r3, idx, dt);
     let k4_r = v3;
 
     let inv6 = dt / 6.0;
@@ -130,7 +132,13 @@ fn vs_main(in: VertexInput, @builtin(instance_index) instanceIdx: u32) -> Vertex
 
     let scale = select(1.0, camera.cameraPos.w, camera.cameraPos.w > 0.01);
     let radius = max(0.008, body.vel.w * scale);
-    let worldPos = body.pos.xyz + in.position * radius;
+    var centerPos = body.pos.xyz;
+    // Visually offset the Moon from Earth so it is clearly visible outside Earth's display sphere
+    if (instanceIdx == 4u) {
+        let earthPos = bodies[3].pos.xyz;
+        centerPos = earthPos + (centerPos - earthPos) * 65.0;
+    }
+    let worldPos = centerPos + in.position * radius;
 
     out.worldPosition = worldPos;
     out.worldNormal = in.normal;
@@ -847,7 +855,7 @@ class SolarSimApp {
             // 3: Earth
             0.9833, 0, 0, 3.00e-6,   0, 6.389, 0, 0.090,    0.25, 0.55, 0.95, 1.0,   1, 3, 0, 0,
             // 4: Moon
-            0.98587, 0, 0.0001, 3.69e-8, 0, 6.604, 0.01, 0.035, 0.82, 0.82, 0.84, 1.0, 4, 4, 0, 0,
+            0.98587, 0, 0, 3.69e-8,   0, 6.60297, 0.01927, 0.035,   0.82, 0.82, 0.84, 1.0,   4, 4, 0, 0,
             // 5: Mars
             1.3814, 0, 0, 3.23e-7,   0, 5.589, 0, 0.065,    0.89, 0.38, 0.22, 1.0,   1, 5, 0, 0,
             // 6: Jupiter
@@ -1042,7 +1050,7 @@ class SolarSimApp {
         u32View[1] = this.subSteps;        // u32: subSteps
         f32View[2] = subDt;                // f32: dt
         f32View[3] = 39.4784176;           // f32: G
-        f32View[4] = 1e-6;                 // f32: softeningSq
+        f32View[4] = 1e-9;                 // f32: softeningSq (~0.00003 AU softening length)
         f32View[5] = this.simTimeYears;    // f32: time
         f32View[6] = 0.0;
         f32View[7] = 0.0;
@@ -1202,11 +1210,21 @@ class SolarSimApp {
             return [0, 0, 0];
         }
         const offset = index * 16;
-        return [
-            this.bodiesFloatArray[offset] || 0,
-            this.bodiesFloatArray[offset + 1] || 0,
-            this.bodiesFloatArray[offset + 2] || 0,
-        ];
+        const x = this.bodiesFloatArray[offset] || 0;
+        const y = this.bodiesFloatArray[offset + 1] || 0;
+        const z = this.bodiesFloatArray[offset + 2] || 0;
+        if (index === 4 && this.bodiesFloatArray.length >= 4 * 16) {
+            const earthOffset = 3 * 16;
+            const ex = this.bodiesFloatArray[earthOffset] || 0;
+            const ey = this.bodiesFloatArray[earthOffset + 1] || 0;
+            const ez = this.bodiesFloatArray[earthOffset + 2] || 0;
+            return [
+                ex + (x - ex) * 65.0,
+                ey + (y - ey) * 65.0,
+                ez + (z - ez) * 65.0,
+            ];
+        }
+        return [x, y, z];
     }
 
     clearTrails() {
@@ -1240,8 +1258,8 @@ class SolarSimApp {
 
                 let minDist = 0.01;
                 if (i === 4) {
-                    // Moon orbiting Earth (~0.00257 AU relative radius)
-                    minDist = 0.0006;
+                    // Moon orbiting Earth (~0.167 AU visual orbital radius)
+                    minDist = 0.004;
                 } else if (i === 0) {
                     minDist = 0.0005;
                 } else {
@@ -1322,11 +1340,25 @@ class SolarSimApp {
             elSwatch.style.boxShadow = `0 0 16px ${meta.color}`;
         }
 
-        const pos = this.getBodyPosition(this.trackedTargetIndex);
-        const distAU = Math.hypot(pos[0], pos[1], pos[2]);
-        const distKm = (distAU * 149.59787).toFixed(1);
-        const elDist = document.getElementById("dossier-dist");
-        if (elDist) elDist.textContent = `${distAU.toFixed(3)} AU (${distKm}M km)`;
+        let distAU;
+        if (this.trackedTargetIndex === 4 && this.bodiesFloatArray && this.bodiesFloatArray.length >= 4 * 16) {
+            const mx = this.bodiesFloatArray[4 * 16];
+            const my = this.bodiesFloatArray[4 * 16 + 1];
+            const mz = this.bodiesFloatArray[4 * 16 + 2];
+            const ex = this.bodiesFloatArray[3 * 16];
+            const ey = this.bodiesFloatArray[3 * 16 + 1];
+            const ez = this.bodiesFloatArray[3 * 16 + 2];
+            distAU = Math.hypot(mx - ex, my - ey, mz - ez);
+            const distThousandKm = (distAU * 149597870.7 / 1000).toFixed(0);
+            const elDist = document.getElementById("dossier-dist");
+            if (elDist) elDist.textContent = `${distAU.toFixed(5)} AU (${distThousandKm}k km to Earth)`;
+        } else {
+            const pos = this.getBodyPosition(this.trackedTargetIndex);
+            distAU = Math.hypot(pos[0], pos[1], pos[2]);
+            const distKm = (distAU * 149.59787).toFixed(1);
+            const elDist = document.getElementById("dossier-dist");
+            if (elDist) elDist.textContent = `${distAU.toFixed(3)} AU (${distKm}M km)`;
+        }
 
         const offset = this.trackedTargetIndex * 16;
         const vx = (this.bodiesFloatArray && this.bodiesFloatArray[offset + 4]) || 0;
@@ -1470,6 +1502,7 @@ class SolarSimApp {
             const idx = parseInt(e.target.value, 10);
             let dist = 14.0;
             if (idx === 0) dist = 14.0;
+            else if (idx === 4) dist = 0.55; // Close-up view for the Moon orbiting Earth
             else if (idx <= 5) dist = 2.2;
             else if (idx <= 7) dist = 5.5;
             else dist = 4.0;
@@ -1608,11 +1641,26 @@ class SolarSimApp {
 
             // Draw Planets
             const t = this.simTimeYears;
+            let earthPx = cx;
+            let earthPy = cy;
             for (let i = 1; i <= 10; ++i) {
                 const meta = PLANET_METADATA[i];
-                const angle = t * (Math.PI * 2 / (meta.a * Math.sqrt(meta.a || 1)));
-                const px = cx + Math.cos(angle) * meta.a * scale;
-                const py = cy + Math.sin(angle) * meta.a * scale * 0.8; // subtle perspective tilt
+                let px, py;
+                if (i === 4) {
+                    // Moon orbits Earth (orbital period ~27.32 days = 0.0748 years)
+                    const moonAngle = t * (Math.PI * 2 / 0.0748);
+                    const moonVisualDist = 22; // px visual offset
+                    px = earthPx + Math.cos(moonAngle) * moonVisualDist;
+                    py = earthPy + Math.sin(moonAngle) * moonVisualDist * 0.8;
+                } else {
+                    const angle = t * (Math.PI * 2 / (meta.a * Math.sqrt(meta.a || 1)));
+                    px = cx + Math.cos(angle) * meta.a * scale;
+                    py = cy + Math.sin(angle) * meta.a * scale * 0.8; // subtle perspective tilt
+                    if (i === 3) {
+                        earthPx = px;
+                        earthPy = py;
+                    }
+                }
 
                 ctx.beginPath();
                 ctx.fillStyle = meta.color;

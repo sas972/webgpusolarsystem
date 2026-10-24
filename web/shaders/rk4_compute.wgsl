@@ -24,7 +24,7 @@ struct SimUniforms {
 @group(0) @binding(1) var<storage, read_write> bodies: array<GpuBody>;
 
 // Calculates gravitational acceleration on a particle at testPos
-fn compute_acceleration(testPos: vec3<f32>, myIdx: u32) -> vec3<f32> {
+fn compute_acceleration(testPos: vec3<f32>, myIdx: u32, stageDt: f32) -> vec3<f32> {
     var acc = vec3<f32>(0.0, 0.0, 0.0);
     let count = sim.bodyCount;
 
@@ -34,7 +34,9 @@ fn compute_acceleration(testPos: vec3<f32>, myIdx: u32) -> vec3<f32> {
         }
 
         let other = bodies[j];
-        let diff = other.pos.xyz - testPos;
+        // Project other body's position to current intermediate RK4 stage time:
+        let otherPos = other.pos.xyz + other.vel.xyz * stageDt;
+        let diff = otherPos - testPos;
         let distSq = dot(diff, diff) + sim.softeningSq;
         let dist = sqrt(distSq);
         let invDist3 = 1.0 / (distSq * dist);
@@ -60,26 +62,26 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let v0 = body.vel.xyz;
 
     // --- Runge-Kutta 4 Stages ---
-    // Stage 1
-    let k1_v = compute_acceleration(r0, idx);
+    // Stage 1 (t = 0)
+    let k1_v = compute_acceleration(r0, idx, 0.0);
     let k1_r = v0;
 
-    // Stage 2
+    // Stage 2 (t = 0.5 * dt)
     let r1 = r0 + k1_r * (0.5 * dt);
     let v1 = v0 + k1_v * (0.5 * dt);
-    let k2_v = compute_acceleration(r1, idx);
+    let k2_v = compute_acceleration(r1, idx, 0.5 * dt);
     let k2_r = v1;
 
-    // Stage 3
+    // Stage 3 (t = 0.5 * dt)
     let r2 = r0 + k2_r * (0.5 * dt);
     let v2 = v0 + k2_v * (0.5 * dt);
-    let k3_v = compute_acceleration(r2, idx);
+    let k3_v = compute_acceleration(r2, idx, 0.5 * dt);
     let k3_r = v2;
 
-    // Stage 4
+    // Stage 4 (t = dt)
     let r3 = r0 + k3_r * dt;
     let v3 = v0 + k3_v * dt;
-    let k4_v = compute_acceleration(r3, idx);
+    let k4_v = compute_acceleration(r3, idx, dt);
     let k4_r = v3;
 
     // Weighted combination: y_new = y0 + (dt / 6) * (k1 + 2*k2 + 2*k3 + k4)

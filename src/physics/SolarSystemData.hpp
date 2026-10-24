@@ -12,8 +12,8 @@ namespace solarsim {
 // AU^3 * M_sun^-1 * Year^-2 = 4 * pi^2
 inline constexpr double G_CONST = 39.478417604357432;
 
-// Softening parameter to prevent singularities during close encounters
-inline constexpr double SOFTENING_EPSILON_SQ = 1e-6; // ~0.001 AU softening length
+// Softening parameter to prevent singularities during close encounters (~0.00003 AU softening length)
+inline constexpr double SOFTENING_EPSILON_SQ = 1e-9;
 
 class SolarSystemFactory {
 public:
@@ -101,9 +101,9 @@ public:
             moon.name = "Moon";
             moon.type = BodyType::Moon;
             moon.mass = 3.6943e-8;
-            // Positioned near Earth with relative orbital speed
-            moon.position = {0.9833 + 0.00257, 0.0, 0.0001};
-            moon.velocity = {0.0, 6.389 + 0.2156, 0.01};
+            // Positioned near Earth with relative orbital speed and 5.145 deg lunar inclination
+            moon.position = {0.9833 + 0.00257, 0.0, 0.0};
+            moon.velocity = {0.0, 6.389 + 0.21397, 0.01927};
             moon.realRadiusKm = 1737.4f;
             moon.displayRadius = 0.035f; // ~0.6x
             moon.color = {0.82f, 0.82f, 0.84f, 1.0f};

@@ -126,6 +126,13 @@ uintptr_t getGpuBufferPointer(const Simulation& sim) {
     return reinterpret_cast<uintptr_t>(sim.getGpuDataPtr());
 }
 
+emscripten::val getGpuBufferView(const Simulation& sim) {
+    return emscripten::val(emscripten::typed_memory_view(
+        sim.getGpuDataByteSize() / sizeof(float),
+        reinterpret_cast<const float*>(sim.getGpuDataPtr())
+    ));
+}
+
 void setIntegratorModeHelper(Simulation& sim, int mode) {
     sim.setIntegratorMode(static_cast<IntegratorMode>(mode));
 }
@@ -184,6 +191,7 @@ EMSCRIPTEN_BINDINGS(solarsim_module) {
 
         // Direct fast memory access
         .function("getGpuBufferPointer", &getGpuBufferPointer)
+        .function("getGpuBufferView", &getGpuBufferView)
         .function("getGpuDataByteSize", &Simulation::getGpuDataByteSize);
 }
 #endif

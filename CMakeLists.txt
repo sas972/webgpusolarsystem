@@ -51,7 +51,7 @@ if(EMSCRIPTEN)
         -sALLOW_MEMORY_GROWTH=1
         -sMODULARIZE=1
         -sEXPORT_NAME="Module"
-        -sEXPORTED_RUNTIME_METHODS=["ccall","cwrap"]
+        -sEXPORTED_RUNTIME_METHODS=["ccall","cwrap","HEAPF32","HEAP8"]
         -sSTACK_SIZE=1MB
     )
 

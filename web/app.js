@@ -496,6 +496,8 @@ class SolarSimApp {
 
         // GPU Buffers
         this.bodyBuffer = null;
+        this.stagingBuffer = null;
+        this.isReadingBack = false;
         this.simUniformBuffer = null;
         this.cameraUniformBuffer = null;
         this.ringUniformBuffer = null;
@@ -883,6 +885,14 @@ class SolarSimApp {
         new Float32Array(this.bodyBuffer.getMappedRange()).set(this.bodiesFloatArray);
         this.bodyBuffer.unmap();
 
+        // Staging buffer for smooth GPU-to-CPU telemetry & camera tracking readback
+        if (this.stagingBuffer) this.stagingBuffer.destroy();
+        this.stagingBuffer = this.device.createBuffer({
+            size: this.bodiesFloatArray.byteLength,
+            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        });
+        this.isReadingBack = false;
+
         // Compute BindGroup
         this.computeBindGroup = this.device.createBindGroup({
             layout: this.computePipeline.getBindGroupLayout(0),
@@ -956,15 +966,15 @@ class SolarSimApp {
             if (this.isPlaying && deltaSec > 0 && deltaSec < 0.5) {
                 const computeStart = performance.now();
 
-                if (this.wasmSimulation && this.wasmModule) {
+                if (this.wasmSimulation) {
                     this.wasmSimulation.update(deltaSec);
-                    const ptr = this.wasmSimulation.getGpuBufferPointer();
-                    const byteSize = this.wasmSimulation.getGpuDataByteSize();
-                    if (ptr && byteSize && this.wasmModule.HEAPF32) {
-                        const f32Heap = new Float32Array(this.wasmModule.HEAPF32.buffer, ptr, byteSize / 4);
-                        this.bodiesFloatArray.set(f32Heap);
-                        if (this.integratorMode === 0) {
-                            this.device.queue.writeBuffer(this.bodyBuffer, 0, f32Heap);
+                    if (this.integratorMode === 0) {
+                        const view = this.wasmSimulation.getGpuBufferView
+                            ? this.wasmSimulation.getGpuBufferView()
+                            : (this.wasmModule && this.wasmModule.HEAPF32 ? new Float32Array(this.wasmModule.HEAPF32.buffer, this.wasmSimulation.getGpuBufferPointer(), this.wasmSimulation.getGpuDataByteSize() / 4) : null);
+                        if (view) {
+                            this.bodiesFloatArray.set(view);
+                            this.device.queue.writeBuffer(this.bodyBuffer, 0, view);
                         }
                     }
                 }
@@ -1029,7 +1039,31 @@ class SolarSimApp {
         }
         computePass.end();
 
+        // Asynchronously copy computed body buffer to staging buffer for CPU readback
+        const canReadback = !this.isReadingBack && this.stagingBuffer;
+        if (canReadback) {
+            commandEncoder.copyBufferToBuffer(
+                this.bodyBuffer, 0,
+                this.stagingBuffer, 0,
+                this.bodiesFloatArray.byteLength
+            );
+        }
+
         this.device.queue.submit([commandEncoder.finish()]);
+
+        if (canReadback) {
+            this.isReadingBack = true;
+            this.stagingBuffer.mapAsync(GPUMapMode.READ).then(() => {
+                if (this.stagingBuffer && this.stagingBuffer.mapState === "mapped") {
+                    const mapped = this.stagingBuffer.getMappedRange();
+                    this.bodiesFloatArray.set(new Float32Array(mapped));
+                    this.stagingBuffer.unmap();
+                }
+                this.isReadingBack = false;
+            }).catch(() => {
+                this.isReadingBack = false;
+            });
+        }
     }
 
     drawScene() {
@@ -1038,10 +1072,10 @@ class SolarSimApp {
         const aspect = this.canvas.width / this.canvas.height;
         const proj = Mat4.perspective((50 * Math.PI) / 180, aspect, 0.05, 2000.0);
 
-        // Smooth camera target tracking
+        // Smooth real-time camera target tracking
         const targetBodyPos = this.getBodyPosition(this.trackedTargetIndex);
         for (let i = 0; i < 3; ++i) {
-            this.cameraFocus[i] += (targetBodyPos[i] - this.cameraFocus[i]) * 0.12;
+            this.cameraFocus[i] += (targetBodyPos[i] - this.cameraFocus[i]) * 0.25;
         }
 
         const yawRad = (this.cameraYaw * Math.PI) / 180;
@@ -1214,6 +1248,10 @@ class SolarSimApp {
             this.simTimeYears = 0.0;
             this.initGpuBodiesBuffer();
             if (this.wasmSimulation) this.wasmSimulation.reset();
+            const pos = this.getBodyPosition(this.trackedTargetIndex);
+            this.cameraFocus[0] = pos[0];
+            this.cameraFocus[1] = pos[1];
+            this.cameraFocus[2] = pos[2];
             this.updateDossierCard();
         });
 
@@ -1221,6 +1259,9 @@ class SolarSimApp {
         const selectInt = document.getElementById("select-integrator");
         selectInt.addEventListener("change", (e) => {
             this.integratorMode = parseInt(e.target.value, 10);
+            if (this.wasmSimulation && this.wasmSimulation.setIntegratorMode) {
+                this.wasmSimulation.setIntegratorMode(this.integratorMode);
+            }
             const pill = document.getElementById("integrator-pill");
             if (this.integratorMode === 1) {
                 pill.textContent = "GPU Compute";
@@ -1235,6 +1276,9 @@ class SolarSimApp {
         const sliderTime = document.getElementById("slider-timewarp");
         sliderTime.addEventListener("input", (e) => {
             this.timeScaleDaysPerSec = parseFloat(e.target.value);
+            if (this.wasmSimulation && this.wasmSimulation.setTimeScale) {
+                this.wasmSimulation.setTimeScale(this.timeScaleDaysPerSec);
+            }
             const mult = (this.timeScaleDaysPerSec / 36.525).toFixed(1);
             document.getElementById("val-timewarp").textContent = `${this.timeScaleDaysPerSec.toFixed(1)} days/s (${mult}x)`;
         });
@@ -1243,6 +1287,9 @@ class SolarSimApp {
         const sliderSub = document.getElementById("slider-substeps");
         sliderSub.addEventListener("input", (e) => {
             this.subSteps = parseInt(e.target.value, 10);
+            if (this.wasmSimulation && this.wasmSimulation.setSubSteps) {
+                this.wasmSimulation.setSubSteps(this.subSteps);
+            }
             document.getElementById("val-substeps").textContent = `${this.subSteps}`;
         });
 
@@ -1271,6 +1318,11 @@ class SolarSimApp {
             this.trackedTargetIndex = targetIdx;
             this.cameraDistance = distance;
             selectTarget.value = String(targetIdx);
+            // Snap camera focus immediately to the planet's current real-time position
+            const curPos = this.getBodyPosition(targetIdx);
+            this.cameraFocus[0] = curPos[0];
+            this.cameraFocus[1] = curPos[1];
+            this.cameraFocus[2] = curPos[2];
             this.updateDossierCard();
         };
 

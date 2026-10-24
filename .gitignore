@@ -1,0 +1,10 @@
+build/
+build-wasm/
+build-native/
+.cache/
+.vscode/
+.idea/
+*.swp
+*.o
+*.wasm
+.DS_Store

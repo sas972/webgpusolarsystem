@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solar System Simulator | C++20 & WebGPU RK4</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- WebGPU Canvas Viewport -->
+    <canvas id="webgpu-canvas"></canvas>
+
+    <!-- UI Overlay -->
+    <div id="ui-container">
+        <!-- Top Status Bar -->
+        <header id="top-bar" class="glass-panel">
+            <div class="logo-group">
+                <div class="pulse-indicator"></div>
+                <h1>SolarSim <span class="badge-gpu">WebGPU</span> <span class="badge-cpp">C++20</span></h1>
+            </div>
+
+            <div class="telemetry-bar">
+                <div class="stat-pill">
+                    <span class="stat-label">TIME</span>
+                    <span id="stat-time" class="stat-value">Initializing...</span>
+                </div>
+                <div class="stat-pill">
+                    <span class="stat-label">FPS</span>
+                    <span id="stat-fps" class="stat-value">--</span>
+                </div>
+                <div class="stat-pill">
+                    <span class="stat-label">ENERGY DRIFT</span>
+                    <span id="stat-energy" class="stat-value good">0.0000%</span>
+                </div>
+                <div class="stat-pill">
+                    <span class="stat-label">COMPUTE TIME</span>
+                    <span id="stat-compute-time" class="stat-value">-- ms</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Control Panel (Left Drawer) -->
+        <aside id="controls-panel" class="glass-panel">
+            <div class="panel-section">
+                <h3>Simulation Controls</h3>
+                <div class="playback-btn-row">
+                    <button id="btn-play-pause" class="btn btn-primary" title="Play or Pause Simulation">
+                        <span id="icon-play-pause">⏸ Pause</span>
+                    </button>
+                    <button id="btn-step" class="btn btn-secondary" title="Advance by 1 Substep">
+                        <span>⏭ Step</span>
+                    </button>
+                    <button id="btn-reset" class="btn btn-danger" title="Reset to Initial Orbital Conditions">
+                        <span>↺ Reset</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="panel-section">
+                <div class="section-header">
+                    <h3>Physics Engine (RK4)</h3>
+                    <span class="badge-pill" id="integrator-pill">GPU Compute</span>
+                </div>
+                <div class="control-row">
+                    <label for="select-integrator">Integrator Mode</label>
+                    <select id="select-integrator" class="select-styled">
+                        <option value="1" selected>WebGPU Compute Shader (RK4 on GPU)</option>
+                        <option value="0">C++20 CPU Engine (RK4 on CPU)</option>
+                    </select>
+                </div>
+
+                <div class="control-row">
+                    <div class="label-with-val">
+                        <label for="slider-timewarp">Simulation Speed</label>
+                        <span id="val-timewarp" class="control-val">36.5 days/s (1x)</span>
+                    </div>
+                    <input type="range" id="slider-timewarp" min="1" max="500" value="36" step="1" class="slider-styled">
+                </div>
+
+                <div class="control-row">
+                    <div class="label-with-val">
+                        <label for="slider-substeps">RK4 Sub-Steps / Frame</label>
+                        <span id="val-substeps" class="control-val">10</span>
+                    </div>
+                    <input type="range" id="slider-substeps" min="1" max="40" value="10" step="1" class="slider-styled">
+                </div>
+
+                <div class="control-row">
+                    <div class="label-with-val">
+                        <label for="slider-asteroids">Asteroid Belt Particles</label>
+                        <span id="val-asteroids" class="control-val">200 bodies</span>
+                    </div>
+                    <input type="range" id="slider-asteroids" min="0" max="1000" value="200" step="50" class="slider-styled">
+                </div>
+            </div>
+
+            <div class="panel-section">
+                <h3>Camera & Target Tracking</h3>
+                <div class="control-row">
+                    <label for="select-target">Focus Target</label>
+                    <select id="select-target" class="select-styled">
+                        <option value="0" selected>The Sun (System Center)</option>
+                        <option value="1">Mercury</option>
+                        <option value="2">Venus</option>
+                        <option value="3">Earth</option>
+                        <option value="4">Moon</option>
+                        <option value="5">Mars</option>
+                        <option value="6">Jupiter</option>
+                        <option value="7">Saturn</option>
+                        <option value="8">Uranus</option>
+                        <option value="9">Neptune</option>
+                        <option value="10">Pluto</option>
+                    </select>
+                </div>
+                <div class="camera-presets-row">
+                    <button id="btn-preset-sun" class="btn btn-secondary btn-sm" title="Overview">☀️ Sun</button>
+                    <button id="btn-preset-earth" class="btn btn-secondary btn-sm" title="Inner Planets">🌍 Earth</button>
+                    <button id="btn-preset-jupiter" class="btn btn-secondary btn-sm" title="Gas Giants">🪐 Jupiter</button>
+                </div>
+                <div class="camera-hints">
+                    <p>💡 <b>Mouse Wheel:</b> Zoom | <b>Left Drag:</b> Orbit | <b>Right Drag:</b> Pan</p>
+                </div>
+            </div>
+
+            <div class="panel-section">
+                <h3>Visual Layers</h3>
+                <div class="toggle-grid">
+                    <label class="toggle-card">
+                        <input type="checkbox" id="toggle-trails" checked>
+                        <span class="toggle-label">Orbit Trails</span>
+                    </label>
+                    <label class="toggle-card">
+                        <input type="checkbox" id="toggle-labels" checked>
+                        <span class="toggle-label">Body Labels</span>
+                    </label>
+                    <label class="toggle-card">
+                        <input type="checkbox" id="toggle-rings" checked>
+                        <span class="toggle-label">Saturn Rings</span>
+                    </label>
+                    <label class="toggle-card">
+                        <input type="checkbox" id="toggle-starfield" checked>
+                        <span class="toggle-label">Starfield Sky</span>
+                    </label>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Right / Bottom Astronomical Telemetry Dossier -->
+        <aside id="target-info-card" class="glass-panel">
+            <div class="target-header">
+                <div>
+                    <h2 id="target-name">Sun</h2>
+                    <span id="target-type" class="badge-type">Yellow Dwarf Star (G2V)</span>
+                </div>
+                <div id="target-color-swatch" class="color-swatch" style="background-color: #ffd56b; box-shadow: 0 0 16px #ffd56b;"></div>
+            </div>
+
+            <div class="dossier-grid">
+                <div class="dossier-item">
+                    <span class="dossier-label">Distance from Sun</span>
+                    <span id="dossier-dist" class="dossier-val">0.000 AU (0.0M km)</span>
+                </div>
+                <div class="dossier-item">
+                    <span class="dossier-label">Orbital Velocity</span>
+                    <span id="dossier-vel" class="dossier-val">0.00 km/s (0.00 AU/yr)</span>
+                </div>
+                <div class="dossier-item">
+                    <span class="dossier-label">Mass</span>
+                    <span id="dossier-mass" class="dossier-val">1.989 × 10³⁰ kg</span>
+                </div>
+                <div class="dossier-item">
+                    <span class="dossier-label">Equatorial Radius</span>
+                    <span id="dossier-radius" class="dossier-val">696,340 km</span>
+                </div>
+                <div class="dossier-item">
+                    <span class="dossier-label">Orbital Period</span>
+                    <span id="dossier-period" class="dossier-val">—</span>
+                </div>
+                <div class="dossier-item">
+                    <span class="dossier-label">Rotational Period</span>
+                    <span id="dossier-rot" class="dossier-val">25.05 Days</span>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Error / Fallback Banner if WebGPU is not supported -->
+    <div id="webgpu-unsupported" class="modal-backdrop hidden">
+        <div class="glass-panel modal-card">
+            <h2>⚠️ WebGPU Not Detected</h2>
+            <p>Your current browser does not have WebGPU enabled. Please use Google Chrome 113+, Microsoft Edge 113+, Safari 18+, or Firefox Nightly with <code>dom.webgpu.enabled = true</code>.</p>
+            <p>Don't worry! You can still explore the C++20 simulation using the software fallback mode.</p>
+            <button id="btn-fallback-dismiss" class="btn btn-primary">Continue with CPU Fallback</button>
+        </div>
+    </div>
+
+    <!-- WebAssembly Loader Script -->
+    <script src="solsim.js"></script>
+    <script src="app.js?v=3"></script>
+</body>
+</html>

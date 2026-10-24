@@ -1,0 +1,39 @@
+services:
+  # 1. VS Code Server: accessible from browser at http://localhost:8443
+  vscode:
+    build: .
+    container_name: solsim-vscode
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - vscode-data:/root/.local/share/code-server
+    ports:
+      - "8443:8443"  # VS Code Server web interface
+    restart: unless-stopped
+    command: code-server --bind-addr 0.0.0.0:8443 --auth none /workspace
+
+  # 2. Dedicated Web Server for SolarSim: accessible at http://localhost:8080
+  web:
+    build: .
+    container_name: solsim-web
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    command: python3 /workspace/scripts/server.py 8080 /workspace/web
+
+  # 3. Interactive CLI development container
+  dev:
+    build: .
+    container_name: solsim-dev
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+
+volumes:
+  vscode-data:

@@ -1,0 +1,22 @@
+{
+  "name": "SolarSim WebGPU C++20 Dev Container",
+  "dockerComposeFile": "../docker-compose.yml",
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "llvm-vs-code-extensions.vscode-clangd",
+        "twxs.cmake",
+        "fragcolor.fragcolor-wgsl"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "cmake.configureOnOpen": false
+      }
+    }
+  },
+  "forwardPorts": [8080, 8443]
+}

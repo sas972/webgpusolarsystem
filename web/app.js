@@ -567,9 +567,20 @@ class SolarSimApp {
         this.simTimeYears = 0.0;
         this.bodyCount = 11 + this.asteroidCount;
         this.bodiesFloatArray = null;
+        this.smoothedComputeTime = 0.0;
 
         // Immediately initialize celestial bodies array so UI is ready before GPU setup
         this.initBodiesData();
+    }
+
+    onComputeTimeMeasured(ms) {
+        if (!isFinite(ms) || ms <= 0) return;
+        if (this.smoothedComputeTime <= 0) {
+            this.smoothedComputeTime = ms;
+        } else {
+            // Smooth rolling exponential moving average (eliminates flickering)
+            this.smoothedComputeTime = this.smoothedComputeTime * 0.85 + ms * 0.15;
+        }
     }
 
     async init() {
@@ -904,6 +915,7 @@ class SolarSimApp {
         if (!this.bodiesFloatArray) {
             this.initBodiesData();
         }
+        if (!this.device) return;
 
         if (this.bodyBuffer) this.bodyBuffer.destroy();
         this.bodyBuffer = this.device.createBuffer({
@@ -982,22 +994,15 @@ class SolarSimApp {
             const deltaSec = (currentTime - this.lastFrameTime) * 0.001;
             this.lastFrameTime = currentTime;
 
-            // FPS counter
             this.frameCount++;
-            if (currentTime - this.lastFpsUpdateTime >= 500) {
-                const fps = Math.round((this.frameCount * 1000) / (currentTime - this.lastFpsUpdateTime));
-                const elFps = document.getElementById("stat-fps");
-                if (elFps) elFps.textContent = fps;
-                this.frameCount = 0;
-                this.lastFpsUpdateTime = currentTime;
-            }
 
+            // Run Physics simulation when playing
             if (this.isPlaying && deltaSec > 0 && deltaSec < 0.5) {
-                const computeStart = performance.now();
-
-                if (this.wasmSimulation) {
-                    this.wasmSimulation.update(deltaSec);
-                    if (this.integratorMode === 0) {
+                if (this.integratorMode === 0) {
+                    // CPU Mode (C++20 WebAssembly)
+                    if (this.wasmSimulation) {
+                        const cpuStart = performance.now();
+                        this.wasmSimulation.update(deltaSec);
                         const view = this.wasmSimulation.getGpuBufferView
                             ? this.wasmSimulation.getGpuBufferView()
                             : (this.wasmModule && this.wasmModule.HEAPF32 ? new Float32Array(this.wasmModule.HEAPF32.buffer, this.wasmSimulation.getGpuBufferPointer(), this.wasmSimulation.getGpuDataByteSize() / 4) : null);
@@ -1005,27 +1010,43 @@ class SolarSimApp {
                             this.bodiesFloatArray.set(view);
                             this.device.queue.writeBuffer(this.bodyBuffer, 0, view);
                         }
+                        this.onComputeTimeMeasured(Math.max(0.05, performance.now() - cpuStart));
                     }
-                }
-
-                if (this.integratorMode === 1) {
-                    // --- WebGPU Compute Pipeline Execution (RK4 on GPU) ---
+                } else if (this.integratorMode === 1) {
+                    // WebGPU Compute Shader Execution (RK4 on GPU)
                     this.executeGpuCompute(deltaSec);
                 }
-
-                if (this.frameCount % 5 === 0) {
-                    this.updateDossierCard();
-                }
-
-                const computeTime = (performance.now() - computeStart).toFixed(2);
-                const elCompute = document.getElementById("stat-compute-time");
-                if (elCompute) elCompute.textContent = `${computeTime} ms`;
 
                 const dtYears = deltaSec * (this.timeScaleDaysPerSec / 365.25);
                 this.simTimeYears += dtYears;
                 const days = (this.simTimeYears * 365.25).toFixed(0);
                 const elTime = document.getElementById("stat-time");
                 if (elTime) elTime.textContent = `Year ${this.simTimeYears.toFixed(2)} (Day ${days})`;
+            }
+
+            // Periodic UI Updates: Dossier card every 5 frames (OUTSIDE compute timing!)
+            if (this.frameCount % 5 === 0) {
+                this.updateDossierCard();
+            }
+
+            // Periodic Telemetry Updates (FPS & Compute Time, every 300 ms for smooth display)
+            if (currentTime - this.lastFpsUpdateTime >= 300) {
+                const fps = Math.round((this.frameCount * 1000) / (currentTime - this.lastFpsUpdateTime));
+                const elFps = document.getElementById("stat-fps");
+                if (elFps) elFps.textContent = fps;
+                this.frameCount = 0;
+                this.lastFpsUpdateTime = currentTime;
+
+                const elCompute = document.getElementById("stat-compute-time");
+                if (elCompute) {
+                    if (!this.isPlaying) {
+                        elCompute.textContent = "Paused";
+                    } else if (this.smoothedComputeTime > 0) {
+                        elCompute.textContent = `${this.smoothedComputeTime.toFixed(2)} ms`;
+                    } else {
+                        elCompute.textContent = "< 0.1 ms";
+                    }
+                }
             }
 
             // Draw WebGPU Frame
@@ -1068,6 +1089,7 @@ class SolarSimApp {
         }
         computePass.end();
 
+        const dispatchStart = performance.now();
         // Asynchronously copy computed body buffer to staging buffer for CPU readback
         const canReadback = !this.isReadingBack && this.stagingBuffer;
         if (canReadback) {
@@ -1083,6 +1105,8 @@ class SolarSimApp {
         if (canReadback) {
             this.isReadingBack = true;
             this.stagingBuffer.mapAsync(GPUMapMode.READ).then(() => {
+                const gpuDuration = performance.now() - dispatchStart;
+                this.onComputeTimeMeasured(gpuDuration);
                 if (this.stagingBuffer && this.stagingBuffer.mapState === "mapped") {
                     const mapped = this.stagingBuffer.getMappedRange();
                     this.bodiesFloatArray.set(new Float32Array(mapped));
@@ -1092,6 +1116,10 @@ class SolarSimApp {
             }).catch(() => {
                 this.isReadingBack = false;
             });
+        } else {
+            // Record queue submission time as baseline when readback is already in-flight
+            const submitTime = performance.now() - dispatchStart;
+            this.onComputeTimeMeasured(Math.max(0.05, submitTime));
         }
     }
 
@@ -1387,14 +1415,35 @@ class SolarSimApp {
             document.getElementById("icon-play-pause").textContent = this.isPlaying ? "⏸ Pause" : "▶ Play";
             btnPlay.classList.toggle("btn-primary", this.isPlaying);
             btnPlay.classList.toggle("btn-secondary", !this.isPlaying);
+            const elCompute = document.getElementById("stat-compute-time");
+            if (elCompute && !this.isPlaying) {
+                elCompute.textContent = "Paused";
+            }
         });
 
         // Step
         document.getElementById("btn-step").addEventListener("click", () => {
             this.isPlaying = false;
             document.getElementById("icon-play-pause").textContent = "▶ Play";
-            this.executeGpuCompute(1.0 / 60.0);
+            const t0 = performance.now();
+            if (this.integratorMode === 0 && this.wasmSimulation) {
+                this.wasmSimulation.update(1.0 / 60.0);
+                const view = this.wasmSimulation.getGpuBufferView
+                    ? this.wasmSimulation.getGpuBufferView()
+                    : (this.wasmModule && this.wasmModule.HEAPF32 ? new Float32Array(this.wasmModule.HEAPF32.buffer, this.wasmSimulation.getGpuBufferPointer(), this.wasmSimulation.getGpuDataByteSize() / 4) : null);
+                if (view) {
+                    this.bodiesFloatArray.set(view);
+                    this.device.queue.writeBuffer(this.bodyBuffer, 0, view);
+                }
+                this.onComputeTimeMeasured(performance.now() - t0);
+            } else {
+                this.executeGpuCompute(1.0 / 60.0);
+            }
             this.updateDossierCard();
+            const elCompute = document.getElementById("stat-compute-time");
+            if (elCompute && this.smoothedComputeTime > 0) {
+                elCompute.textContent = `${this.smoothedComputeTime.toFixed(2)} ms`;
+            }
         });
 
         // Reset
@@ -1408,6 +1457,9 @@ class SolarSimApp {
             this.cameraFocus[1] = pos[1];
             this.cameraFocus[2] = pos[2];
             this.updateDossierCard();
+            this.smoothedComputeTime = 0.0;
+            const elCompute = document.getElementById("stat-compute-time");
+            if (elCompute) elCompute.textContent = "-- ms";
         });
 
         // Integrator Mode
@@ -1577,17 +1629,42 @@ class SolarSimApp {
         if (!ctx) return;
 
         let lastTime = performance.now();
+        let frameCount2D = 0;
+        let lastStatsTime = performance.now();
 
         const render2D = (time) => {
             const dtSec = (time - lastTime) * 0.001;
             lastTime = time;
 
             if (this.isPlaying && dtSec > 0 && dtSec < 0.5) {
+                const compStart = performance.now();
                 const dtYears = dtSec * (this.timeScaleDaysPerSec / 365.25);
                 this.simTimeYears += dtYears;
                 const days = (this.simTimeYears * 365.25).toFixed(0);
                 const elTime = document.getElementById("stat-time");
                 if (elTime) elTime.textContent = `Year ${this.simTimeYears.toFixed(2)} (Day ${days})`;
+                this.onComputeTimeMeasured(Math.max(0.05, performance.now() - compStart));
+            }
+
+            // Periodic Telemetry Updates in Fallback Mode (every 300 ms)
+            frameCount2D++;
+            if (time - lastStatsTime >= 300) {
+                const fps = Math.round((frameCount2D * 1000) / (time - lastStatsTime));
+                const elFps = document.getElementById("stat-fps");
+                if (elFps) elFps.textContent = fps;
+                frameCount2D = 0;
+                lastStatsTime = time;
+
+                const elCompute = document.getElementById("stat-compute-time");
+                if (elCompute) {
+                    if (!this.isPlaying) {
+                        elCompute.textContent = "Paused";
+                    } else if (this.smoothedComputeTime > 0) {
+                        elCompute.textContent = `${this.smoothedComputeTime.toFixed(2)} ms`;
+                    } else {
+                        elCompute.textContent = "< 0.1 ms";
+                    }
+                }
             }
 
             const width = (this.canvas.width = window.innerWidth);
@@ -1688,5 +1765,6 @@ class SolarSimApp {
 // Start application
 window.addEventListener("DOMContentLoaded", () => {
     const app = new SolarSimApp();
+    window.app = app;
     app.init();
 });

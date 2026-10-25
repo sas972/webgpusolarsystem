@@ -4,6 +4,17 @@ A modern, in-browser Solar System simulator built on **C++20** and **WebGPU**, p
 
 ---
 
+## 🌐 Live Demo
+
+Experience the live simulation directly in your browser:  
+👉 **[https://sas972.github.io/webgpusolarsystem/](https://sas972.github.io/webgpusolarsystem/)**
+
+*(Runs on any modern WebGPU-compatible browser such as Google Chrome 113+, Microsoft Edge 113+, Safari 18+, or Firefox Nightly, with automatic high-performance 2D Canvas fallback).*
+
+> ⚡ **Vibe Coded with AI**: This entire project was created through **vibe coding** (AI pair programming).
+
+---
+
 ## 🚀 Key Features
 
 1. **WebGPU Render & Compute Pipeline**:
